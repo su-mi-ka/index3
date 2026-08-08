@@ -22,6 +22,19 @@ if (flutterVersionName == null) {
     flutterVersionName = "1.0"
 }
 
+// 署名情報。ローカルは android/key.properties、CI は環境変数（GitHub Secrets）から読む。
+// どちらも無い場合は debug 署名にフォールバックしてビルド自体は通す。
+def keystoreProperties = new Properties()
+def keystorePropertiesFile = rootProject.file("key.properties")
+if (keystorePropertiesFile.exists()) {
+    keystorePropertiesFile.withReader("UTF-8") { keystoreProperties.load(it) }
+}
+def resolvedStoreFile = keystoreProperties["storeFile"] ?: System.getenv("KEYSTORE_PATH")
+def resolvedStorePassword = keystoreProperties["storePassword"] ?: System.getenv("KEYSTORE_PASSWORD")
+def resolvedKeyAlias = keystoreProperties["keyAlias"] ?: System.getenv("KEY_ALIAS")
+def resolvedKeyPassword = keystoreProperties["keyPassword"] ?: System.getenv("KEY_PASSWORD")
+def hasReleaseSigning = resolvedStoreFile != null
+
 android {
     namespace = "com.sumika.index3"
     compileSdk = 34
@@ -44,10 +57,23 @@ android {
         versionName = flutterVersionName
     }
 
+    signingConfigs {
+        // 固定の署名鍵で署名する（Google サインインの SHA-1 を一定に保つため）。
+        // 鍵は秘密情報なのでリポジトリには含めず、key.properties か GitHub Secrets から読む。
+        release {
+            if (hasReleaseSigning) {
+                storeFile = file(resolvedStoreFile)
+                storePassword = resolvedStorePassword
+                keyAlias = resolvedKeyAlias
+                keyPassword = resolvedKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // 動作確認用に debug 署名を使用。配布時は独自の署名鍵に差し替えること。
-            signingConfig = signingConfigs.debug
+            // 署名情報があれば release 鍵、無ければ debug 鍵でビルド（SHA-1 は debug のものになる）。
+            signingConfig = hasReleaseSigning ? signingConfigs.release : signingConfigs.debug
         }
     }
 }

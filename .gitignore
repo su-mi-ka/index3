@@ -14,9 +14,13 @@ pubspec.lock
 # Android
 android/.gradle/
 android/local.properties
-android/key.properties
-android/app/upload-keystore.jks
 android/**/GeneratedPluginRegistrant.*
+
+# 署名鍵・認証情報（絶対にコミットしない）
+android/key.properties
+*.jks
+*.keystore
+android/keystore/
 
 # OS
 .DS_Store
