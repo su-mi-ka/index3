@@ -31,7 +31,9 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          # このプロジェクトの Gradle 設定（AGP 8.1.0）と世代を合わせるためバージョンを固定。
+          # channel: stable にすると AGP 9 系の新しい Flutter が入り、ビルドが失敗する。
+          flutter-version: "3.24.5"
           cache: true
 
       - name: Show Flutter version
