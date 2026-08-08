@@ -1,8 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Googleドライブへのアップロードに必要 -->
-    <uses-permission android:name="android.permission.INTERNET" />
-
     <!-- Android 11 (API 30) 以降: すべてのファイルへのアクセス。
          アプリが独自の場所に保存した画像なども横断的に走査するために必要。 -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
@@ -18,7 +15,7 @@
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
 
     <application
-        android:label="ファイル同期"
+        android:label="整理整頓"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:requestLegacyExternalStorage="true">
@@ -41,20 +38,6 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
-
-        <!-- Dropbox OAuth のリダイレクトを受け取る（flutter_web_auth_2）。
-             scheme は Dropbox アプリコンソールのリダイレクト URI
-             (index3sync://oauth2redirect) と一致させること。 -->
-        <activity
-            android:name="com.linusu.flutter_web_auth_2.CallbackActivity"
-            android:exported="true">
-            <intent-filter android:label="flutter_web_auth_2">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="index3sync" />
-            </intent-filter>
-        </activity>
     </application>
 
     <queries>

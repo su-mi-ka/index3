@@ -1,12 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-import '../services/dropbox_auth_service.dart';
-import '../services/dropbox_uploader.dart';
 import '../services/file_scanner.dart';
+import '../services/local_organizer.dart';
 
 /// アプリの状態遷移。
-enum _Phase { idle, scanning, uploading, done }
+enum _Phase { idle, scanning, copying, done }
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -16,51 +15,15 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  final DropboxAuthService _auth = DropboxAuthService();
   final FileScanner _scanner = FileScanner();
 
+  /// 整理先（端末内ストレージ直下の「整理整頓」フォルダ）。
+  static const String _destinationRoot = '/storage/emulated/0/整理整頓';
+
   _Phase _phase = _Phase.idle;
-  bool _signedIn = false;
-
   int _scanFound = 0;
-  UploadProgress? _upload;
+  OrganizeProgress? _progress;
   String _message = '';
-
-  @override
-  void initState() {
-    super.initState();
-    // 2 回目以降は保存済みトークンから自動サインインを試みる。
-    _auth.restoreSession().then((bool ok) {
-      if (mounted) {
-        setState(() => _signedIn = ok);
-      }
-    });
-  }
-
-  Future<void> _handleSignIn() async {
-    if (!_auth.isConfigured) {
-      setState(() => _message = 'DROPBOX_APP_KEY が未設定です（README のセットアップ参照）');
-      return;
-    }
-    try {
-      final bool ok = await _auth.signIn();
-      setState(() {
-        _signedIn = ok;
-        _message = ok ? '' : 'サインインがキャンセルされました';
-      });
-    } catch (e) {
-      setState(() => _message = 'サインインに失敗しました: $e');
-    }
-  }
-
-  Future<void> _handleSignOut() async {
-    await _auth.signOut();
-    setState(() {
-      _signedIn = false;
-      _phase = _Phase.idle;
-      _message = '';
-    });
-  }
 
   /// ストレージ全体へのアクセス権限を要求する。
   ///
@@ -84,29 +47,16 @@ class _HomeScreenState extends State<HomeScreen> {
     return false;
   }
 
-  Future<void> _startSync() async {
+  Future<void> _start() async {
     if (!await _ensureStoragePermission()) {
       setState(() => _message = 'ストレージへのアクセス許可が必要です');
       return;
     }
 
-    final String? token = _auth.accessToken;
-    if (token == null) {
-      // トークンが切れている場合は復元を試みる。
-      final bool ok = await _auth.restoreSession();
-      if (!ok) {
-        setState(() {
-          _signedIn = false;
-          _message = '認証の有効期限が切れました。再度サインインしてください。';
-        });
-        return;
-      }
-    }
-
     setState(() {
       _phase = _Phase.scanning;
       _scanFound = 0;
-      _upload = null;
+      _progress = null;
       _message = '';
     });
 
@@ -121,114 +71,75 @@ class _HomeScreenState extends State<HomeScreen> {
     if (files.isEmpty) {
       setState(() {
         _phase = _Phase.done;
-        _message = 'アップロード対象のファイルが見つかりませんでした';
+        _message = '対象のファイルが見つかりませんでした';
       });
       return;
     }
 
-    setState(() => _phase = _Phase.uploading);
-    final DropboxUploader uploader = DropboxUploader(_auth.accessToken!);
+    setState(() => _phase = _Phase.copying);
+    final LocalOrganizer organizer = LocalOrganizer(_destinationRoot);
     try {
-      await uploader.uploadAll(
+      final OrganizeProgress result = await organizer.organize(
         files,
-        dateFolderName: _todayFolderName(),
-        onProgress: (UploadProgress p) {
+        onProgress: (OrganizeProgress p) {
           if (mounted) {
-            setState(() => _upload = p);
+            setState(() => _progress = p);
           }
         },
       );
       setState(() {
         _phase = _Phase.done;
-        _message = '同期が完了しました';
+        _progress = result;
+        _message = '整理が完了しました';
       });
     } catch (e) {
       setState(() {
         _phase = _Phase.done;
-        _message = 'アップロード中にエラーが発生しました: $e';
+        _message = '整理中にエラーが発生しました: $e';
       });
     }
   }
 
-  /// `YYYY-MM-DD` 形式の日付フォルダ名。
-  String _todayFolderName() {
-    final DateTime now = DateTime.now();
-    final String y = now.year.toString().padLeft(4, '0');
-    final String m = now.month.toString().padLeft(2, '0');
-    final String d = now.day.toString().padLeft(2, '0');
-    return '$y-$m-$d';
-  }
-
   @override
   Widget build(BuildContext context) {
+    final bool busy = _phase == _Phase.scanning || _phase == _Phase.copying;
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('ファイル同期'),
-        actions: <Widget>[
-          if (_signedIn)
-            IconButton(
-              tooltip: 'サインアウト',
-              icon: const Icon(Icons.logout),
-              onPressed: _handleSignOut,
-            ),
-        ],
-      ),
+      appBar: AppBar(title: const Text('整理整頓')),
       body: Padding(
         padding: const EdgeInsets.all(24),
         child: Center(
-          child: _signedIn ? _buildSignedIn() : _buildSignIn(),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              const Icon(Icons.folder_copy_outlined, size: 72),
+              const SizedBox(height: 16),
+              const Text(
+                '端末内のファイルをデータ形式ごとに分類して\n「整理整頓」フォルダにまとめてコピーします。',
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '保存先: $_destinationRoot',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: 32),
+              _buildStatus(),
+              const SizedBox(height: 32),
+              FilledButton.icon(
+                onPressed: busy ? null : _start,
+                icon: const Icon(Icons.cleaning_services),
+                label: Text(busy ? '実行中…' : '整理する'),
+              ),
+              if (_message.isNotEmpty) ...<Widget>[
+                const SizedBox(height: 16),
+                Text(_message, textAlign: TextAlign.center),
+              ],
+            ],
+          ),
         ),
       ),
-    );
-  }
-
-  Widget _buildSignIn() {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: <Widget>[
-        const Icon(Icons.cloud_upload_outlined, size: 72),
-        const SizedBox(height: 16),
-        const Text(
-          '端末内のファイルをデータ形式ごとに分類して\nDropbox に一括コピーします。',
-          textAlign: TextAlign.center,
-        ),
-        const SizedBox(height: 24),
-        FilledButton.icon(
-          onPressed: _handleSignIn,
-          icon: const Icon(Icons.login),
-          label: const Text('Dropbox でサインイン'),
-        ),
-        if (_message.isNotEmpty) ...<Widget>[
-          const SizedBox(height: 16),
-          Text(_message, style: const TextStyle(color: Colors.red)),
-        ],
-      ],
-    );
-  }
-
-  Widget _buildSignedIn() {
-    final bool busy = _phase == _Phase.scanning || _phase == _Phase.uploading;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: <Widget>[
-        const Text(
-          'Dropbox に接続済みです',
-          textAlign: TextAlign.center,
-        ),
-        const SizedBox(height: 32),
-        _buildStatus(),
-        const SizedBox(height: 32),
-        FilledButton.icon(
-          onPressed: busy ? null : _startSync,
-          icon: const Icon(Icons.sync),
-          label: Text(busy ? '実行中…' : '今すぐ同期'),
-        ),
-        if (_message.isNotEmpty) ...<Widget>[
-          const SizedBox(height: 16),
-          Text(_message, textAlign: TextAlign.center),
-        ],
-      ],
     );
   }
 
@@ -236,7 +147,7 @@ class _HomeScreenState extends State<HomeScreen> {
     switch (_phase) {
       case _Phase.idle:
         return const Text(
-          '「今すぐ同期」を押すと、ストレージを走査して\nアップロードを開始します。',
+          '「整理する」を押すと、ストレージを走査して\nコピーを開始します。',
           textAlign: TextAlign.center,
         );
       case _Phase.scanning:
@@ -247,17 +158,15 @@ class _HomeScreenState extends State<HomeScreen> {
             Text('ファイルを検索中… ($_scanFound 件)'),
           ],
         );
-      case _Phase.uploading:
-        final UploadProgress? p = _upload;
+      case _Phase.copying:
+        final OrganizeProgress? p = _progress;
         final double? value =
             (p != null && p.total > 0) ? p.done / p.total : null;
         return Column(
           children: <Widget>[
             LinearProgressIndicator(value: value),
             const SizedBox(height: 16),
-            if (p != null)
-              Text('アップロード中… ${p.done} / ${p.total}'
-                  '${p.failed > 0 ? '（失敗 ${p.failed}）' : ''}'),
+            if (p != null) Text('コピー中… ${p.done} / ${p.total}'),
             if (p != null && p.currentName.isNotEmpty) ...<Widget>[
               const SizedBox(height: 4),
               Text(
@@ -270,14 +179,17 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         );
       case _Phase.done:
-        final UploadProgress? p = _upload;
+        final OrganizeProgress? p = _progress;
         return Column(
           children: <Widget>[
             const Icon(Icons.check_circle, color: Colors.green, size: 48),
             const SizedBox(height: 8),
             if (p != null)
-              Text('${p.done} 件をアップロードしました'
-                  '${p.failed > 0 ? '（失敗 ${p.failed}）' : ''}'),
+              Text(
+                'コピー ${p.copied} 件 / スキップ ${p.skipped} 件'
+                '${p.failed > 0 ? ' / 失敗 ${p.failed} 件' : ''}',
+                textAlign: TextAlign.center,
+              ),
           ],
         );
     }
