@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../services/file_scanner.dart';
 import '../services/local_organizer.dart';
+import '../services/wifi_server.dart';
 
-/// アプリの状態遷移。
+/// アプリの状態遷移（整理処理側）。
 enum _Phase { idle, scanning, copying, done }
 
 class HomeScreen extends StatefulWidget {
@@ -20,15 +22,23 @@ class _HomeScreenState extends State<HomeScreen> {
   /// 整理先（端末内ストレージ直下の「整理整頓」フォルダ）。
   static const String _destinationRoot = '/storage/emulated/0/整理整頓';
 
+  final WifiServer _server = WifiServer(_destinationRoot);
+
   _Phase _phase = _Phase.idle;
   int _scanFound = 0;
   OrganizeProgress? _progress;
   String _message = '';
 
+  bool _sharing = false;
+  String? _shareUrl;
+
+  @override
+  void dispose() {
+    _server.stop();
+    super.dispose();
+  }
+
   /// ストレージ全体へのアクセス権限を要求する。
-  ///
-  /// Android 11 (API 30) 以降は「すべてのファイルへのアクセス」
-  /// (MANAGE_EXTERNAL_STORAGE) が必要。許可されていない場合は設定画面へ誘導する。
   Future<bool> _ensureStoragePermission() async {
     if (await Permission.manageExternalStorage.isGranted) {
       return true;
@@ -47,7 +57,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return false;
   }
 
-  Future<void> _start() async {
+  Future<void> _organize() async {
     if (!await _ensureStoragePermission()) {
       setState(() => _message = 'ストレージへのアクセス許可が必要です');
       return;
@@ -100,44 +110,121 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<void> _toggleShare() async {
+    if (_sharing) {
+      await _server.stop();
+      setState(() {
+        _sharing = false;
+        _shareUrl = null;
+      });
+      return;
+    }
+
+    final String? url = await _server.start();
+    if (url == null) {
+      await _server.stop();
+      setState(() {
+        _sharing = false;
+        _shareUrl = null;
+        _message = 'WiFi に接続してから共有してください';
+      });
+      return;
+    }
+    setState(() {
+      _sharing = true;
+      _shareUrl = url;
+      _message = '';
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final bool busy = _phase == _Phase.scanning || _phase == _Phase.copying;
     return Scaffold(
       appBar: AppBar(title: const Text('整理整頓')),
-      body: Padding(
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
-        child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: <Widget>[
-              const Icon(Icons.folder_copy_outlined, size: 72),
-              const SizedBox(height: 16),
-              const Text(
-                '端末内のファイルをデータ形式ごとに分類して\n「整理整頓」フォルダにまとめてコピーします。',
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                '保存先: $_destinationRoot',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-              const SizedBox(height: 32),
-              _buildStatus(),
-              const SizedBox(height: 32),
-              FilledButton.icon(
-                onPressed: busy ? null : _start,
-                icon: const Icon(Icons.cleaning_services),
-                label: Text(busy ? '実行中…' : '整理する'),
-              ),
-              if (_message.isNotEmpty) ...<Widget>[
-                const SizedBox(height: 16),
-                Text(_message, textAlign: TextAlign.center),
-              ],
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            const SizedBox(height: 8),
+            const Icon(Icons.folder_copy_outlined, size: 64),
+            const SizedBox(height: 16),
+            const Text(
+              '端末内のファイルをデータ形式ごとに分類して\n「整理整頓」フォルダにまとめ、WiFi で共有します。',
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '保存先: $_destinationRoot',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 24),
+            _buildStatus(),
+            const SizedBox(height: 24),
+            FilledButton.icon(
+              onPressed: busy ? null : _organize,
+              icon: const Icon(Icons.cleaning_services),
+              label: Text(busy ? '実行中…' : '① 整理する'),
+            ),
+            const SizedBox(height: 12),
+            FilledButton.tonalIcon(
+              onPressed: busy ? null : _toggleShare,
+              icon: Icon(_sharing ? Icons.stop : Icons.wifi),
+              label: Text(_sharing ? '② 共有を停止' : '② WiFi で共有'),
+            ),
+            if (_shareUrl != null) ...<Widget>[
+              const SizedBox(height: 20),
+              _buildShareCard(),
             ],
-          ),
+            if (_message.isNotEmpty) ...<Widget>[
+              const SizedBox(height: 16),
+              Text(_message, textAlign: TextAlign.center),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildShareCard() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: <Widget>[
+            const Text('パソコンやタブレットのブラウザで、\n同じ WiFi につないで下の URL を開いてください。',
+                textAlign: TextAlign.center),
+            const SizedBox(height: 12),
+            SelectableText(
+              _shareUrl ?? '',
+              style: Theme.of(context)
+                  .textTheme
+                  .titleMedium
+                  ?.copyWith(fontWeight: FontWeight.bold),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: () async {
+                await Clipboard.setData(ClipboardData(text: _shareUrl ?? ''));
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('URL をコピーしました')),
+                  );
+                }
+              },
+              icon: const Icon(Icons.copy),
+              label: const Text('URL をコピー'),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'この画面を開いている間だけ共有されます。',
+              style: Theme.of(context).textTheme.bodySmall,
+              textAlign: TextAlign.center,
+            ),
+          ],
         ),
       ),
     );
@@ -147,7 +234,7 @@ class _HomeScreenState extends State<HomeScreen> {
     switch (_phase) {
       case _Phase.idle:
         return const Text(
-          '「整理する」を押すと、ストレージを走査して\nコピーを開始します。',
+          'まず「① 整理する」でファイルをまとめ、\n次に「② WiFi で共有」でパソコンから受け取れます。',
           textAlign: TextAlign.center,
         );
       case _Phase.scanning:
