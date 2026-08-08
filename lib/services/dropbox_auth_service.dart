@@ -15,9 +15,14 @@ import 'package:http/http.dart' as http;
 ///
 /// 権限は「App folder」を想定。アプリ専用フォルダ以外にはアクセスできない。
 class DropboxAuthService {
-  /// Dropbox アプリの App key。ビルド時に
-  /// `--dart-define=DROPBOX_APP_KEY=xxxxx` で注入する。
-  static const String appKey = String.fromEnvironment('DROPBOX_APP_KEY');
+  /// Dropbox アプリの App key。
+  ///
+  /// App key は秘密情報ではなく、配布されるアプリに必ず埋め込まれる公開値のため、
+  /// 既定値として直接指定している（App secret は PKCE では使わないので埋め込まない）。
+  /// 別のアプリに差し替える場合はビルド時に
+  /// `--dart-define=DROPBOX_APP_KEY=xxxxx` で上書きできる。
+  static const String appKey =
+      String.fromEnvironment('DROPBOX_APP_KEY', defaultValue: '5enp10jfp1hwszs');
 
   /// OAuth リダイレクトのカスタムスキーム（AndroidManifest / Dropbox コンソールと一致させる）。
   static const String _callbackScheme = 'index3sync';

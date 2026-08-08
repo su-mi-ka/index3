@@ -50,13 +50,12 @@ GitHub Actions のワークフロー (`.github/workflows/build.yml`) が入っ�
 3. **Permissions** タブで以下にチェックして **Submit**:
    - `files.content.write`
    - `files.content.read`（任意。将来の重複判定などに使う場合）
-4. GitHub 側に App key を登録:
-   - リポジトリの **Settings → Secrets and variables → Actions → Variables** タブ
-   - **New repository variable** で `DROPBOX_APP_KEY` を作成し、値に手順2の App key を入力
-5. **Build APK** を実行 → `latest` リリースの APK をインストール → アプリで **Dropbox でサインイン**
+4. **Build APK** を実行 → `latest` リリースの APK をインストール → アプリで **Dropbox でサインイン**
 
-> App key は秘密情報ではない（アプリに埋め込まれる公開値）ため、Secret ではなく **Variable** で管理しています。ローカルでビルドする場合は
-> `flutter run --dart-define=DROPBOX_APP_KEY=あなたのAppKey` のように渡してください。
+> App key は `lib/services/dropbox_auth_service.dart` に既定値として埋め込んでいます（App key は秘密情報ではなく、配布アプリに必ず含まれる公開値のため）。**App secret は PKCE 方式では使いません**（埋め込まない）。
+>
+> 別の Dropbox アプリに差し替えたい場合は、`appKey` の既定値を変更するか、ビルド時に
+> `flutter run --dart-define=DROPBOX_APP_KEY=あなたのAppKey` で上書きしてください（GitHub の Variable `DROPBOX_APP_KEY` を設定した場合はそちらが優先されます）。
 
 ---
 
