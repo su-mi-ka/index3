@@ -41,6 +41,20 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <!-- Dropbox OAuth のリダイレクトを受け取る（flutter_web_auth_2）。
+             scheme は Dropbox アプリコンソールのリダイレクト URI
+             (index3sync://oauth2redirect) と一致させること。 -->
+        <activity
+            android:name="com.linusu.flutter_web_auth_2.CallbackActivity"
+            android:exported="true">
+            <intent-filter android:label="flutter_web_auth_2">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="index3sync" />
+            </intent-filter>
+        </activity>
     </application>
 
     <queries>

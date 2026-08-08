@@ -1,5 +1,5 @@
 name: index3
-description: 端末内のファイルをデータ形式ごとに分類してGoogleドライブへ一括アップロードするAndroidアプリ。
+description: 端末内のファイルをデータ形式ごとに分類してDropboxへ一括アップロードするAndroidアプリ。
 publish_to: "none"
 version: 1.0.0+1
 
@@ -11,12 +11,14 @@ dependencies:
   flutter:
     sdk: flutter
 
-  # Googleアカウントの選択・認証
-  google_sign_in: ^6.2.1
-  # google_sign_in の認証情報を googleapis 用の HTTP クライアントに変換する
-  extension_google_sign_in_as_googleapis_auth: ^2.0.12
-  # Google Drive REST API (v3)
-  googleapis: ^13.2.0
+  # Dropbox REST API / トークン取得のための HTTP 通信
+  http: ^1.2.0
+  # OAuth のブラウザ認証（PKCE フローのコールバック受け取り）
+  flutter_web_auth_2: ^3.1.2
+  # リフレッシュトークンの安全な保存
+  flutter_secure_storage: ^9.2.2
+  # PKCE の code_challenge 生成（SHA-256）
+  crypto: ^3.0.3
   # ストレージアクセス権限の要求
   permission_handler: ^11.3.1
 

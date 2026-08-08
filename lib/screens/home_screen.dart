@@ -1,10 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:google_sign_in/google_sign_in.dart';
-import 'package:googleapis/drive/v3.dart' as drive;
 import 'package:permission_handler/permission_handler.dart';
 
-import '../services/auth_service.dart';
-import '../services/drive_uploader.dart';
+import '../services/dropbox_auth_service.dart';
+import '../services/dropbox_uploader.dart';
 import '../services/file_scanner.dart';
 
 /// アプリの状態遷移。
@@ -18,11 +16,11 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  final AuthService _auth = AuthService();
+  final DropboxAuthService _auth = DropboxAuthService();
   final FileScanner _scanner = FileScanner();
 
   _Phase _phase = _Phase.idle;
-  GoogleSignInAccount? _account;
+  bool _signedIn = false;
 
   int _scanFound = 0;
   UploadProgress? _upload;
@@ -31,20 +29,24 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    // 2回目以降は自動サインインを試みる。
-    _auth.signInSilently().then((GoogleSignInAccount? user) {
+    // 2 回目以降は保存済みトークンから自動サインインを試みる。
+    _auth.restoreSession().then((bool ok) {
       if (mounted) {
-        setState(() => _account = user);
+        setState(() => _signedIn = ok);
       }
     });
   }
 
   Future<void> _handleSignIn() async {
+    if (!_auth.isConfigured) {
+      setState(() => _message = 'DROPBOX_APP_KEY が未設定です（README のセットアップ参照）');
+      return;
+    }
     try {
-      final GoogleSignInAccount? user = await _auth.signIn();
+      final bool ok = await _auth.signIn();
       setState(() {
-        _account = user;
-        _message = user == null ? 'サインインがキャンセルされました' : '';
+        _signedIn = ok;
+        _message = ok ? '' : 'サインインがキャンセルされました';
       });
     } catch (e) {
       setState(() => _message = 'サインインに失敗しました: $e');
@@ -54,7 +56,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _handleSignOut() async {
     await _auth.signOut();
     setState(() {
-      _account = null;
+      _signedIn = false;
       _phase = _Phase.idle;
       _message = '';
     });
@@ -63,8 +65,7 @@ class _HomeScreenState extends State<HomeScreen> {
   /// ストレージ全体へのアクセス権限を要求する。
   ///
   /// Android 11 (API 30) 以降は「すべてのファイルへのアクセス」
-  /// (MANAGE_EXTERNAL_STORAGE) が必要。許可されていない場合は
-  /// 設定画面へ誘導する。
+  /// (MANAGE_EXTERNAL_STORAGE) が必要。許可されていない場合は設定画面へ誘導する。
   Future<bool> _ensureStoragePermission() async {
     if (await Permission.manageExternalStorage.isGranted) {
       return true;
@@ -74,12 +75,9 @@ class _HomeScreenState extends State<HomeScreen> {
     if (status.isGranted) {
       return true;
     }
-
-    // 旧APIのフォールバック。
     if (await Permission.storage.request().isGranted) {
       return true;
     }
-
     if (status.isPermanentlyDenied) {
       await openAppSettings();
     }
@@ -92,13 +90,19 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
-    final drive.DriveApi? api = await _auth.getDriveApi();
-    if (api == null) {
-      setState(() => _message = '認証情報を取得できませんでした。再度サインインしてください。');
-      return;
+    final String? token = _auth.accessToken;
+    if (token == null) {
+      // トークンが切れている場合は復元を試みる。
+      final bool ok = await _auth.restoreSession();
+      if (!ok) {
+        setState(() {
+          _signedIn = false;
+          _message = '認証の有効期限が切れました。再度サインインしてください。';
+        });
+        return;
+      }
     }
 
-    // スキャン
     setState(() {
       _phase = _Phase.scanning;
       _scanFound = 0;
@@ -122,9 +126,8 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
-    // アップロード
     setState(() => _phase = _Phase.uploading);
-    final DriveUploader uploader = DriveUploader(api);
+    final DropboxUploader uploader = DropboxUploader(_auth.accessToken!);
     try {
       await uploader.uploadAll(
         files,
@@ -162,7 +165,7 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: const Text('ファイル同期'),
         actions: <Widget>[
-          if (_account != null)
+          if (_signedIn)
             IconButton(
               tooltip: 'サインアウト',
               icon: const Icon(Icons.logout),
@@ -173,7 +176,7 @@ class _HomeScreenState extends State<HomeScreen> {
       body: Padding(
         padding: const EdgeInsets.all(24),
         child: Center(
-          child: _account == null ? _buildSignIn() : _buildSignedIn(),
+          child: _signedIn ? _buildSignedIn() : _buildSignIn(),
         ),
       ),
     );
@@ -186,14 +189,14 @@ class _HomeScreenState extends State<HomeScreen> {
         const Icon(Icons.cloud_upload_outlined, size: 72),
         const SizedBox(height: 16),
         const Text(
-          '端末内のファイルをデータ形式ごとに分類して\nGoogleドライブに一括コピーします。',
+          '端末内のファイルをデータ形式ごとに分類して\nDropbox に一括コピーします。',
           textAlign: TextAlign.center,
         ),
         const SizedBox(height: 24),
         FilledButton.icon(
           onPressed: _handleSignIn,
           icon: const Icon(Icons.login),
-          label: const Text('Googleアカウントでサインイン'),
+          label: const Text('Dropbox でサインイン'),
         ),
         if (_message.isNotEmpty) ...<Widget>[
           const SizedBox(height: 16),
@@ -209,8 +212,8 @@ class _HomeScreenState extends State<HomeScreen> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
-        Text(
-          'アカウント: ${_account?.email ?? ''}',
+        const Text(
+          'Dropbox に接続済みです',
           textAlign: TextAlign.center,
         ),
         const SizedBox(height: 32),

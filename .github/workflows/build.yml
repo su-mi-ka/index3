@@ -12,12 +12,6 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      # 署名鍵は GitHub Secrets から受け取る（未設定なら debug 署名でビルド）。
-      KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-      KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-      KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-      KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -32,7 +26,6 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           # このプロジェクトの Gradle 設定（AGP 8.1.0）と世代を合わせるためバージョンを固定。
-          # channel: stable にすると AGP 9 系の新しい Flutter が入り、ビルドが失敗する。
           flutter-version: "3.24.5"
           cache: true
 
@@ -42,23 +35,12 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Decode signing keystore
-        if: env.KEYSTORE_BASE64 != ''
-        run: |
-          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
-          echo "KEYSTORE_PATH=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
-
+      # Dropbox の App key をビルドに埋め込む（リポジトリ Variable DROPBOX_APP_KEY）。
+      # App key は秘密情報ではない（アプリに埋め込まれる公開値）ため Variable で管理する。
       - name: Build release APK
-        run: flutter build apk --release
-
-      # Google サインインの登録に使う署名鍵の SHA-1 をログに出力する。
-      - name: Print signing SHA-1 (register this in Google Cloud)
-        if: env.KEYSTORE_PATH != ''
         run: |
-          keytool -list -v \
-            -keystore "$KEYSTORE_PATH" \
-            -alias "$KEY_ALIAS" \
-            -storepass "$KEYSTORE_PASSWORD" | grep -i "SHA1:" || true
+          flutter build apk --release \
+            --dart-define=DROPBOX_APP_KEY="${{ vars.DROPBOX_APP_KEY }}"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
@@ -67,10 +49,9 @@ jobs:
           path: build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
 
-      # 署名済みのときだけ、スマホから直接落とせる "latest" リリースに添付する。
+      # スマホから直接ダウンロードしやすいよう "latest" リリースに添付する。
       #   https://github.com/su-mi-ka/index3/releases/download/latest/app-release.apk
       - name: Publish to "latest" release
-        if: env.KEYSTORE_PATH != ''
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
